@@ -53,10 +53,6 @@
         #digital-rpm-small { font-size: 2.6rem; color: var(--text-color); opacity: 0.95; }
         .unit-label { font-size: 0.8rem; opacity: 0.5; margin-left: 5px; font-weight: 400; }
 
-        .controls { margin-top: 10px; z-index: 1000; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; width: 95%; }
-        .btn { padding: 12px 16px; font-size: 0.8rem; font-family: inherit; cursor: pointer; border-radius: 4px; border: 1px solid var(--text-color); background: var(--btn-bg); color: var(--text-color); text-transform: uppercase; font-weight: bold; }
-        .btn.active { background: #ff0055 !important; color: #fff !important; }
-
         #nav-widget {
             position: absolute;
             top: env(safe-area-inset-top, 20px);
@@ -104,7 +100,15 @@
             z-index: 2000; overflow-y: auto; padding-bottom: 40px;
         }
         
-        #map { width: 90%; height: 300px; margin: 10px auto; border: 2px solid var(--text-color); border-radius: 8px; }
+        #map { 
+            width: 90%; 
+            height: 300px; 
+            margin: 10px auto; 
+            border: 2px solid var(--text-color); 
+            border-radius: 8px; 
+            background: #222; 
+        }
+
         .setting-group { margin: 8px; text-align: center; }
         label { font-size: 0.75rem; opacity: 0.8; display: block; margin-bottom: 4px; font-weight: bold; }
         select, input { font-family: inherit; font-size: 1.2rem; padding: 8px; background: rgba(0,0,0,0.2); color: var(--text-color); border: 1px solid var(--text-color); text-align: center; width: 240px; border-radius: 4px; }
@@ -162,7 +166,6 @@
         const rpmEl = document.getElementById('digital-rpm-small');
         const spdEl = document.getElementById('gps-speed-big');
         const learnStatusEl = document.getElementById('learn-status');
-        
         const navWidget = document.getElementById('nav-widget');
         const navArrow = document.getElementById('nav-arrow');
         const navDist = document.getElementById('nav-dist');
@@ -176,14 +179,13 @@
         let peakRpm = 0, peakTimestamp = 0, peakDuration = 3000;
         let maxRpm = 10000, redLine = 9000, shiftLimit = 9500, isInverted = false;
         let isDemo = false, demoTime = 0, stars = [], isAutoLearning = false;
-        
-        // オートラーン管理
         let ratios = JSON.parse(localStorage.getItem('motoMeterRatios')) || [0,0,0,0,0,0];
         let stableCounter = 0, lastRatio = 0;
         const LEARN_RPM_TARGET = 3000;
         const LEARN_RPM_MARGIN = 500;
         const LEARN_STABLE_TIME_FRAMES = 300;
 
+        let map = null, marker = null;
         let bluetoothDevice = null, isAutoReconnecting = false, wakeLock = null;
 
         const requestWakeLock = async () => {
@@ -191,18 +193,20 @@
         };
 
         function initMap() {
-            if (!map) {
-                map = L.map('map').setView([targetLat || 35.68, targetLon || 139.69], 13);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-                if (targetLat && targetLon) marker = L.marker([targetLat, targetLon]).addTo(map);
-                map.on('click', (e) => {
-                    const lat = e.latlng.lat.toFixed(6), lon = e.latlng.lng.toFixed(6);
-                    document.getElementById('target-lat').value = lat;
-                    document.getElementById('target-lon').value = lon;
-                    if (marker) marker.setLatLng(e.latlng); else marker = L.marker(e.latlng).addTo(map);
-                });
+            if (map) {
+                setTimeout(() => { map.invalidateSize(); }, 100);
+                return;
             }
-            setTimeout(() => map.invalidateSize(), 300);
+            map = L.map('map').setView([targetLat || 35.68, targetLon || 139.69], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+            if (targetLat && targetLon) marker = L.marker([targetLat, targetLon]).addTo(map);
+            map.on('click', (e) => {
+                const lat = e.latlng.lat.toFixed(6), lon = e.latlng.lng.toFixed(6);
+                document.getElementById('target-lat').value = lat;
+                document.getElementById('target-lon').value = lon;
+                if (marker) marker.setLatLng(e.latlng); else marker = L.marker(e.latlng).addTo(map);
+            });
+            setTimeout(() => { map.invalidateSize(); }, 300);
         }
 
         function startGPS() {
@@ -255,16 +259,6 @@
             setTimeout(doConnect, 5000);
         }
 
-        function updateNavWidget() {
-            if (targetLat !== 0 && curLat !== 0) {
-                navWidget.style.display = "flex";
-                const distM = getDistance(curLat, curLon, targetLat, targetLon);
-                navDist.innerText = distM >= 1000 ? (distM/1000).toFixed(1)+"km" : Math.round(distM)+"m";
-                const targetBearing = getBearing(curLat, curLon, targetLat, targetLon);
-                navArrow.style.transform = `rotate(${targetBearing - currentHeading}deg)`;
-            } else navWidget.style.display = "none";
-        }
-
         function getBearing(lat1, lon1, lat2, lon2) {
             const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180, Δλ = (lon2-lon1) * Math.PI/180;
             return (Math.atan2(Math.sin(Δλ)*Math.cos(φ2), Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ)) * 180/Math.PI + 360) % 360;
@@ -284,19 +278,12 @@
                     if (inRpm && Math.abs(currentRatio - lastRatio) < (currentRatio * 0.02)) {
                         stableCounter++;
                         learnStatusEl.style.display = "block";
-                        // まだ1つも登録がない場合は「1st Gear」として促す
                         const gearLabel = ratios.every(r => r === 0) ? "1st GEAR" : "NEXT GEAR";
                         learnStatusEl.innerText = `${gearLabel} LEARNING: ${Math.round((stableCounter/LEARN_STABLE_TIME_FRAMES)*100)}%`;
-
                         if (stableCounter >= LEARN_STABLE_TIME_FRAMES) {
-                            // 最初の登録なら強制的に1番目、そうでなければ重複チェックして登録
-                            if (ratios.every(r => r === 0)) {
-                                ratios[0] = currentRatio;
-                            } else {
-                                let exists = ratios.some(r => Math.abs(r - currentRatio) < (r * 0.1));
-                                if (!exists) {
-                                    for (let i=0; i<6; i++) { if (ratios[i] === 0) { ratios[i] = currentRatio; ratios.sort((a,b)=>b-a); break; } }
-                                }
+                            if (ratios.every(r => r === 0)) ratios[0] = currentRatio;
+                            else if (!ratios.some(r => Math.abs(r - currentRatio) < (r * 0.1))) {
+                                for (let i=0; i<6; i++) { if (ratios[i] === 0) { ratios[i] = currentRatio; ratios.sort((a,b)=>b-a); break; } }
                             }
                             localStorage.setItem('motoMeterRatios', JSON.stringify(ratios));
                             stableCounter = 0;
@@ -305,18 +292,13 @@
                         }
                     } else {
                         stableCounter = 0;
-                        learnStatusEl.style.display = inRpm ? "block" : "none";
-                        if(inRpm) learnStatusEl.innerText = "KEEP 3000RPM...";
+                        if(inRpm) { learnStatusEl.style.display = "block"; learnStatusEl.innerText = "KEEP 3000RPM..."; }
+                        else learnStatusEl.style.display = "none";
                     }
                     lastRatio = currentRatio;
                 }
-
                 let best = "Z", minD = 999;
-                ratios.forEach((r, i) => { 
-                    if (r === 0) return; 
-                    const d = Math.abs(currentRatio - r); 
-                    if (d < minD && d < (r * 0.12)) { minD = d; best = (i+1).toString(); } 
-                });
+                ratios.forEach((r, i) => { if (r === 0) return; const d = Math.abs(currentRatio - r); if (d < minD && d < (r * 0.12)) { minD = d; best = (i+1).toString(); } });
                 gear = best;
             } else { gear = "Z"; learnStatusEl.style.display = "none"; }
         }
@@ -397,7 +379,10 @@
             if (isInverted) document.body.classList.add('inverted');
         }
 
-        document.getElementById('configBtn').onclick = () => { document.getElementById('settings-page').style.display='flex'; initMap(); };
+        document.getElementById('configBtn').onclick = () => { 
+            document.getElementById('settings-page').style.display='flex'; 
+            initMap(); 
+        };
         document.getElementById('closeConfigBtn').onclick = () => {
             localStorage.setItem('motoNavLat', document.getElementById('target-lat').value);
             localStorage.setItem('motoNavLon', document.getElementById('target-lon').value);
@@ -412,13 +397,8 @@
         document.getElementById('autoLearnBtn').onclick = (e) => { 
             isAutoLearning = !isAutoLearning; 
             e.target.classList.toggle('active'); 
-            if(isAutoLearning) { 
-                ratios = [0,0,0,0,0,0]; // 学習開始時にリセット
-                localStorage.setItem('motoMeterRatios', JSON.stringify(ratios));
-                stableCounter = 0;
-            }
+            if(isAutoLearning) { ratios = [0,0,0,0,0,0]; localStorage.setItem('motoMeterRatios', JSON.stringify(ratios)); stableCounter = 0; }
         };
-        document.getElementById('demoBtn').onclick = (e) => { isDemo = !isDemo; e.target.classList.toggle('active'); };
         loadSettings(); startGPS(); draw();
     </script>
 </body>
